@@ -2,6 +2,7 @@ import { defineConfig } from 'mobilewright';
 
 export default defineConfig({
   testDir: './tests',
+  testMatch: '**/*.spec.ts',
   reporter: [['html'], ['allure-playwright', { resultsDir: 'allure-results' }]],
   platform: 'android',
   bundleId: 'com.saucelabs.mydemoapp.android',
