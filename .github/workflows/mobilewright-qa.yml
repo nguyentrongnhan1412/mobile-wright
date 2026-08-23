@@ -63,6 +63,13 @@ jobs:
           npm cache verify
           npm ci
 
+      # The emulator boots a fresh AVD every run (no persisted snapshot), so the
+      # app under test must be (re)installed each time. Pin the version instead of
+      # "latest" so a new upstream release can't silently change what's under test.
+      - name: Download app under test (Sauce Labs My Demo App)
+        run: |
+          curl -sL -o app.apk "https://github.com/saucelabs/my-demo-app-android/releases/download/2.2.0/mda-2.2.0-25.apk"
+
       # KVM is required to run a hardware-accelerated Android emulator on
       # GitHub-hosted Linux runners.
       - name: Enable KVM group perms

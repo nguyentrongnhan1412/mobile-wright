@@ -28,6 +28,9 @@ yarn-error.log*
 dist/
 build/
 
+# App under test (downloaded by CI)
+app.apk
+
 # Editor/OS
 .vscode/
 .idea/
