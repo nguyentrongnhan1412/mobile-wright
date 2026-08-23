@@ -54,8 +54,14 @@ jobs:
           node-version: 20
           cache: npm
 
+      # Guard against a stale/corrupted npm cache (restored by actions/setup-node's
+      # `cache: npm`) leaving behind stray files from a previous install that don't
+      # match package-lock.json.
       - name: Install dependencies
-        run: npm ci
+        run: |
+          rm -rf node_modules
+          npm cache verify
+          npm ci
 
       # KVM is required to run a hardware-accelerated Android emulator on
       # GitHub-hosted Linux runners.
@@ -84,6 +90,15 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: |
+            echo "Verifying AVD booted successfully..."
+            BOOT_COMPLETED=$(adb shell getprop sys.boot_completed | tr -d '\r\n')
+            if [ "$BOOT_COMPLETED" != "1" ]; then
+              echo "::error::AVD failed to report sys.boot_completed=1 (got '$BOOT_COMPLETED')"
+              adb devices -l
+              exit 1
+            fi
+            echo "AVD boot verified (sys.boot_completed=1)."
+
             npx mobilewright test \
               --workers ${{ github.event.inputs.workers-per-shard }} \
               --shard ${{ matrix.shard }}/${{ github.event.inputs.shard-count }}
@@ -121,7 +136,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          rm -rf node_modules
+          npm cache verify
+          npm ci
 
       - name: Download all Allure results
         uses: actions/download-artifact@v4
