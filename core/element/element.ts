@@ -14,8 +14,8 @@ export class Element {
         }
     }
 
-    async tap() {
-        await this.waitUntilVisible();
+    async tap(timeout?: number) {
+        await this.waitUntilVisible(timeout);
         await this.locator.tap();
     }
 

@@ -8,7 +8,10 @@ export default defineConfig({
   installApps: './app.apk',
   autoAppLaunch: true,
   fullyParallel: true,
-  timeout: 60_000,
+  // Must comfortably exceed appLaunchTimeout + device/agent setup overhead,
+  // not just the test body — on a cold CI emulator, agent install/connect
+  // alone can take 40-60s before the first test action even runs.
+  timeout: 120_000,
   use: {
     actionTimeout: 15_000,
     appLaunchTimeout: 40_000,

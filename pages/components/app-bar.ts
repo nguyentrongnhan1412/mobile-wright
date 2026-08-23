@@ -10,8 +10,8 @@ export class AppBar  {
         this.cartButton = new Element({ locator: screen.getByLabel('Displays number of items in your cart')});
     }
 
-    async accessSideMenu() : Promise<void> {
-        await this.sideMenuButton.tap();
+    async accessSideMenu(timeout: number = 30_000) : Promise<void> {
+        await this.sideMenuButton.tap(timeout);
     }
 
     async accessCart() : Promise<void> {
