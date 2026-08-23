@@ -1,0 +1,39 @@
+{
+    "compilerOptions": {
+        "types": [
+            "node"
+        ],
+        "target": "ES6",
+        "module": "es6",
+        "sourceMap": true,
+        "resolveJsonModule": true,
+        "forceConsistentCasingInFileNames": true,
+        "allowSyntheticDefaultImports": true,
+        "paths": {
+            "@constants/*": [
+                "./constants/*"
+            ],
+            "@core/*": [
+                "./core/*"
+            ],
+            "@data/*": [
+                "./data/*"
+            ],
+            "@fixtures/*": [
+                "./fixtures/*"
+            ],
+            "@hooks/*": [
+                "./hooks/*"
+            ], 
+            "@models/*": [
+                "./models/*"
+            ],
+            "@pages/*": [
+                "./pages/*"
+            ], 
+            "@providers/*": [
+                "./providers/*"
+            ], 
+        }
+    }
+}

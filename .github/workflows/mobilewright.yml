@@ -1,0 +1,140 @@
+name: Mobilewright Android Tests
+
+# Manual trigger only — no push/PR/schedule triggers.
+on:
+  workflow_dispatch:
+    inputs:
+      shard-count:
+        description: 'Number of parallel shards (each shard runs on its own emulator runner)'
+        required: false
+        default: '4'
+      workers-per-shard:
+        description: 'Number of parallel workers within each shard'
+        required: false
+        default: '2'
+      api-level:
+        description: 'Android emulator API level'
+        required: false
+        default: '34'
+
+jobs:
+  # Compute the shard matrix dynamically from the shard-count input so the
+  # number of parallel jobs can be tuned per run without editing the workflow.
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.set-matrix.outputs.shards }}
+    steps:
+      - id: set-matrix
+        shell: bash
+        run: |
+          COUNT="${{ github.event.inputs.shard-count }}"
+          MATRIX=$(node -e "console.log(JSON.stringify(Array.from({length: Number(process.argv[1])}, (_, i) => i + 1)))" "$COUNT")
+          echo "shards=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: prepare-matrix
+    name: shard ${{ matrix.shard }}/${{ github.event.inputs.shard-count }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(needs.prepare-matrix.outputs.shards) }}
+    env:
+      TEST_USERNAME: ${{ secrets.TEST_USERNAME }}
+      TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # KVM is required to run a hardware-accelerated Android emulator on
+      # GitHub-hosted Linux runners.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Gradle/AVD cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ github.event.inputs.api-level }}
+
+      - name: Run tests on Android emulator (shard ${{ matrix.shard }})
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ github.event.inputs.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            npx mobilewright test \
+              --workers ${{ github.event.inputs.workers-per-shard }} \
+              --shard ${{ matrix.shard }}/${{ github.event.inputs.shard-count }}
+
+      - name: Upload Allure results (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-${{ matrix.shard }}
+          path: allure-results
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload test artifacts (shard ${{ matrix.shard }})
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.shard }}
+          path: test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+  merge-reports:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all Allure results
+        uses: actions/download-artifact@v4
+        with:
+          path: allure-results
+          pattern: allure-results-*
+          merge-multiple: true
+
+      - name: Generate Allure report
+        run: npx allure generate allure-results --clean -o allure-report
+
+      - name: Upload Allure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report
+          retention-days: 14

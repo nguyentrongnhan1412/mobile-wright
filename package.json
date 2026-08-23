@@ -1,0 +1,22 @@
+{
+  "scripts": {
+    "test": "mobilewright test",
+    "test:report": "mobilewright show-report",
+    "allure:generate": "allure generate allure-results --clean -o allure-report",
+    "allure:open": "allure open allure-report",
+    "allure:report": "npm run allure:generate && npm run allure:open",
+    "postinstall": "patch-package"
+  },
+  "devDependencies": {
+    "@mobilewright/test": "^0.0.53",
+    "@types/node": "latest",
+    "allure-commandline": "^2.43.0",
+    "allure-playwright": "^3.10.2",
+    "mobilecli": "^1.0.1",
+    "mobilewright": "^0.0.53",
+    "patch-package": "^8.0.1"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  }
+}

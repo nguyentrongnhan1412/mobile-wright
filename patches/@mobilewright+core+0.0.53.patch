@@ -1,0 +1,285 @@
+diff --git a/node_modules/@mobilewright/core/dist/locator.d.ts b/node_modules/@mobilewright/core/dist/locator.d.ts
+index 32063e9..c63ffa6 100644
+--- a/node_modules/@mobilewright/core/dist/locator.d.ts
++++ b/node_modules/@mobilewright/core/dist/locator.d.ts
+@@ -49,6 +49,12 @@ export declare class Locator {
+     getByPlaceholder(placeholder: string, opts?: {
+         exact?: boolean;
+     }): Locator;
++    /**
++     * Locate elements with a raw XPath expression, scoped under this locator.
++     * Supports `//Type[@attr='v' and @attr2='v2']` steps chained by
++     * `/preceding-sibling::Type[...]` or plain `/`. Not a general XPath engine.
++     */
++    xpath(expression: string): Locator;
+     protected child(childStrategy: LocatorStrategy): Locator;
+     /** Build a sibling locator that shares this one's driver, options, and step fn. */
+     protected withStrategy(strategy: LocatorStrategy): Locator;
+@@ -58,6 +64,14 @@ export declare class Locator {
+     and(locator: Locator): Locator;
+     /** Match elements that satisfy either this locator or the given locator. */
+     or(locator: Locator): Locator;
++    /**
++     * Match the nearest sibling matching this locator that precedes `anchor` in
++     * document order — equivalent to XPath's `preceding-sibling::*[...]` relative
++     * to `anchor`. Useful for flat hierarchies (e.g. a RecyclerView list) where an
++     * element (like a product image) has no identifying text of its own but a later
++     * sibling (like its title) does.
++     */
++    precedingSibling(anchor: Locator): Locator;
+     first(): Locator;
+     last(): Locator;
+     nth(index: number): Locator;
+diff --git a/node_modules/@mobilewright/core/dist/locator.js b/node_modules/@mobilewright/core/dist/locator.js
+index ec6d5c9..00ec282 100644
+--- a/node_modules/@mobilewright/core/dist/locator.js
++++ b/node_modules/@mobilewright/core/dist/locator.js
+@@ -41,6 +41,14 @@ export class Locator {
+     getByPlaceholder(placeholder, opts) {
+         return this.child({ kind: 'placeholder', value: placeholder, exact: opts?.exact });
+     }
++    /**
++     * Locate elements with a raw XPath expression, scoped under this locator.
++     * Supports `//Type[@attr='v' and @attr2='v2']` steps chained by
++     * `/preceding-sibling::Type[...]` or plain `/`. Not a general XPath engine.
++     */
++    xpath(expression) {
++        return this.child({ kind: 'xpath', value: expression });
++    }
+     child(childStrategy) {
+         return this.withStrategy({ kind: 'chain', parent: this.strategy, child: childStrategy });
+     }
+@@ -70,6 +78,16 @@ export class Locator {
+     or(locator) {
+         return this.withStrategy({ kind: 'or', left: this.strategy, right: locator.strategy });
+     }
++    /**
++     * Match the nearest sibling matching this locator that precedes `anchor` in
++     * document order — equivalent to XPath's `preceding-sibling::*[...]` relative
++     * to `anchor`. Useful for flat hierarchies (e.g. a RecyclerView list) where an
++     * element (like a product image) has no identifying text of its own but a later
++     * sibling (like its title) does.
++     */
++    precedingSibling(anchor) {
++        return this.withStrategy({ kind: 'precedingSibling', anchor: anchor.strategy, value: this.strategy });
++    }
+     // ─── Collection ──────────────────────────────────────────────
+     first() {
+         return this.nth(0);
+diff --git a/node_modules/@mobilewright/core/dist/query-engine.d.ts b/node_modules/@mobilewright/core/dist/query-engine.d.ts
+index 839125a..76aaa0c 100644
+--- a/node_modules/@mobilewright/core/dist/query-engine.d.ts
++++ b/node_modules/@mobilewright/core/dist/query-engine.d.ts
+@@ -49,12 +49,31 @@ export type LocatorStrategy = {
+     kind: 'or';
+     left: LocatorStrategy;
+     right: LocatorStrategy;
++} | {
++    kind: 'precedingSibling';
++    /** Locator identifying the context node (e.g. the product title). */
++    anchor: LocatorStrategy;
++    /** Locator the preceding sibling must match (e.g. the product image). */
++    value: LocatorStrategy;
++} | {
++    kind: 'xpath';
++    /** Raw XPath expression. Supports `//Type[@attr='v' and @attr2='v2']` steps
++     *  chained by `/preceding-sibling::Type[...]` or plain `/`. */
++    value: string;
+ };
+ /**
+  * Query all ViewNodes in a tree that match a locator strategy.
+  * Returns matching nodes in document order.
+  */
+ export declare function queryAll(roots: ViewNode[], strategy: LocatorStrategy): ViewNode[];
++/**
++ * Evaluate a small subset of XPath directly against a ViewNode tree, e.g.:
++ *   //android.widget.TextView[@content-desc='Product Title' and @text='Foo']
++ *     /preceding-sibling::android.widget.ImageView[@content-desc='Product Image']
++ * Not a general XPath engine — supports `//Type[predicates]` steps chained by
++ * `/preceding-sibling::` or plain `/`, with `@attr='value'` predicates joined by `and`.
++ */
++export declare function evaluateXPath(roots: ViewNode[], xpath: string): ViewNode[];
+ export declare const WEBVIEW_TYPES: Set<string>;
+ export declare const ROLE_TYPE_MAP: {
+     readonly button: readonly ["button", "imagebutton", "floatingactionbutton", "materialbutton", "appcompatbutton"];
+diff --git a/node_modules/@mobilewright/core/dist/query-engine.js b/node_modules/@mobilewright/core/dist/query-engine.js
+index 1d0b171..9b1fb4a 100644
+--- a/node_modules/@mobilewright/core/dist/query-engine.js
++++ b/node_modules/@mobilewright/core/dist/query-engine.js
+@@ -25,6 +25,29 @@ export function queryAll(roots, strategy) {
+         const candidates = queryAll(roots, strategy.parent);
+         return candidates.filter((node) => matchesFilter(node, roots, strategy));
+     }
++    if (strategy.kind === 'xpath') {
++        return evaluateXPath(roots, strategy.value);
++    }
++    if (strategy.kind === 'precedingSibling') {
++        // Mirrors XPath's preceding-sibling::*[...] : for each node matching the
++        // anchor strategy, walk backwards through its sibling list (same `children`
++        // array it lives in) and return the nearest earlier sibling matching `value`.
++        const anchors = queryAll(roots, strategy.anchor);
++        const results = [];
++        for (const anchor of anchors) {
++            const siblings = findSiblingArray(roots, anchor);
++            if (!siblings)
++                continue;
++            const anchorIndex = siblings.indexOf(anchor);
++            for (let i = anchorIndex - 1; i >= 0; i--) {
++                if (matchesStrategy(siblings[i], strategy.value)) {
++                    results.push(siblings[i]);
++                    break;
++                }
++            }
++        }
++        return results;
++    }
+     if (strategy.kind === 'chain') {
+         // Root parent means "search the whole tree" — skip chaining
+         if (strategy.parent.kind === 'root') {
+@@ -59,6 +82,106 @@ function walkTree(nodes, visitor) {
+         walkTree(node.children, visitor);
+     }
+ }
++/** Find the array (roots, or some node's `children`) that directly contains `target`. */
++function findSiblingArray(roots, target) {
++    if (roots.includes(target)) {
++        return roots;
++    }
++    for (const node of roots) {
++        const found = findSiblingArray(node.children, target);
++        if (found)
++            return found;
++    }
++    return null;
++}
++/**
++ * Evaluate a small subset of XPath directly against a ViewNode tree:
++ *
++ *   //Type[@attr='v' and @attr2='v2']/preceding-sibling::Type2[@attr='v']
++ *
++ * Supports one or more `//Type[predicates]` steps chained by `/preceding-sibling::`
++ * (nearest matching earlier sibling) or plain `/` (descendant). `Type` may be `*`.
++ * Predicates are `@attr='value'` (or `"value"`) joined by `and`. Not a general XPath
++ * engine — just enough of the axis/predicate grammar mobile locators commonly use.
++ */
++export function evaluateXPath(roots, xpath) {
++    const steps = parseXPath(xpath);
++    let candidates = null; // null = not yet constrained, search whole tree
++    for (const step of steps) {
++        if (step.axis === 'descendant-or-self') {
++            const pool = candidates ?? flattenNodes(roots);
++            candidates = pool.filter((node) => matchesXPathStep(node, step));
++        }
++        else {
++            // preceding-sibling: for each current candidate (acting as anchor),
++            // find its nearest earlier sibling matching this step.
++            const anchors = candidates ?? [];
++            const results = [];
++            for (const anchor of anchors) {
++                const siblings = findSiblingArray(roots, anchor);
++                if (!siblings)
++                    continue;
++                const anchorIndex = siblings.indexOf(anchor);
++                for (let i = anchorIndex - 1; i >= 0; i--) {
++                    if (matchesXPathStep(siblings[i], step)) {
++                        results.push(siblings[i]);
++                        break;
++                    }
++                }
++            }
++            candidates = results;
++        }
++    }
++    return candidates ?? [];
++}
++function matchesXPathStep(node, step) {
++    if (step.type !== '*' && node.type !== step.type)
++        return false;
++    return step.predicates.every(({ attr, value }) => xpathAttr(node, attr) === value);
++}
++/** Map an XPath attribute name to the ViewNode field it corresponds to. */
++function xpathAttr(node, attr) {
++    switch (attr) {
++        case 'content-desc':
++            return node.label;
++        case 'text':
++            return node.text;
++        case 'resource-id':
++            return node.resourceId ?? node.identifier;
++        case 'class':
++            return node.type;
++        default:
++            return node.raw?.[attr];
++    }
++}
++const XPATH_STEP_RE = /\/(?:(preceding-sibling)::)?([A-Za-z0-9_.*]+)(?:\[(.*?)\])?(?=\/|$)/g;
++function parseXPath(xpath) {
++    const normalized = xpath.trim().replace(/^\/\//, '/');
++    const steps = [];
++    let match;
++    XPATH_STEP_RE.lastIndex = 0;
++    while ((match = XPATH_STEP_RE.exec(normalized))) {
++        const [, axis, type, predicateSrc] = match;
++        steps.push({
++            axis: axis === 'preceding-sibling' ? 'preceding-sibling' : 'descendant-or-self',
++            type,
++            predicates: predicateSrc ? parsePredicates(predicateSrc) : [],
++        });
++    }
++    if (steps.length === 0) {
++        throw new Error(`Unsupported XPath expression: ${xpath}`);
++    }
++    return steps;
++}
++function parsePredicates(predicateSrc) {
++    return predicateSrc.split(/\s+and\s+/i).map((clause) => {
++        const m = /^@([\w-]+)\s*=\s*['"](.*)['"]$/.exec(clause.trim());
++        if (!m) {
++            throw new Error(`Unsupported XPath predicate: ${clause}`);
++        }
++        return { attr: m[1], value: m[2] };
++    });
++}
+ export const WEBVIEW_TYPES = new Set([
+     'WKWebView',
+     'WebView', // mobilecli iOS dump strips the XCUIElementType prefix
+@@ -126,6 +249,8 @@ function matchesStrategy(node, strategy) {
+         case 'filter':
+         case 'and':
+         case 'or':
++        case 'precedingSibling':
++        case 'xpath':
+             // Handled above in queryAll
+             return false;
+         default:
+diff --git a/node_modules/@mobilewright/core/dist/screen.d.ts b/node_modules/@mobilewright/core/dist/screen.d.ts
+index 959f367..9d989dc 100644
+--- a/node_modules/@mobilewright/core/dist/screen.d.ts
++++ b/node_modules/@mobilewright/core/dist/screen.d.ts
+@@ -27,6 +27,12 @@ export declare class Screen {
+     getByPlaceholder(placeholder: string, opts?: {
+         exact?: boolean;
+     }): Locator;
++    /**
++     * Locate elements with a raw XPath expression.
++     * Supports `//Type[@attr='v' and @attr2='v2']` steps chained by
++     * `/preceding-sibling::Type[...]` or plain `/`. Not a general XPath engine.
++     */
++    xpath(expression: string): Locator;
+     getByWebView(opts?: GetByWebViewOptions): WebViewLocator;
+     screenshot(opts?: ScreenshotOptions): Promise<Buffer>;
+     swipe(direction: SwipeDirection, opts?: SwipeOptions): Promise<void>;
+diff --git a/node_modules/@mobilewright/core/dist/screen.js b/node_modules/@mobilewright/core/dist/screen.js
+index 1f821ce..228eabe 100644
+--- a/node_modules/@mobilewright/core/dist/screen.js
++++ b/node_modules/@mobilewright/core/dist/screen.js
+@@ -34,6 +34,9 @@ export class Screen {
+     getByPlaceholder(placeholder, opts) {
+         return this.root.getByPlaceholder(placeholder, opts);
+     }
++    xpath(expression) {
++        return this.root.xpath(expression);
++    }
+     getByWebView(opts) {
+         const loc = new WebViewLocator(this.driver, { kind: 'chain', parent: { kind: 'root' }, child: { kind: 'webview', testId: opts?.testId } }, this.locatorDefaults);
+         loc._stepFn = this.root._stepFn;
