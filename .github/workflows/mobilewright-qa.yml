@@ -1,4 +1,4 @@
-name: Mobilewright Android Tests
+name: Mobilewright Android Tests (QA)
 
 # Manual trigger only — no push/PR/schedule triggers.
 on:
@@ -36,6 +36,7 @@ jobs:
     needs: prepare-matrix
     name: shard ${{ matrix.shard }}/${{ github.event.inputs.shard-count }}
     runs-on: ubuntu-latest
+    environment: QA
     strategy:
       fail-fast: false
       matrix:
