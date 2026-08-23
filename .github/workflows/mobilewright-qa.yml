@@ -92,11 +92,7 @@ jobs:
           script: |
             echo "Verifying AVD booted successfully..."
             BOOT_COMPLETED=$(adb shell getprop sys.boot_completed | tr -d '\r\n')
-            if [ "$BOOT_COMPLETED" != "1" ]; then
-              echo "::error::AVD failed to report sys.boot_completed=1 (got '$BOOT_COMPLETED')"
-              adb devices -l
-              exit 1
-            fi
+            if [ "$BOOT_COMPLETED" != "1" ]; then echo "::error::AVD failed to report sys.boot_completed=1 (got '$BOOT_COMPLETED')"; adb devices -l; exit 1; fi
             echo "AVD boot verified (sys.boot_completed=1)."
 
             npx mobilewright test \
