@@ -91,7 +91,13 @@ jobs:
           disable-animations: true
           script: |
             echo "Verifying AVD booted successfully..."
-            BOOT_COMPLETED=$(adb shell getprop sys.boot_completed | tr -d '\r\n')
+            BOOT_COMPLETED=""
+            for i in $(seq 1 30); do
+              BOOT_COMPLETED=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')
+              if [ "$BOOT_COMPLETED" = "1" ]; then break; fi
+              echo "Waiting for boot_completed (attempt $i/30, got '$BOOT_COMPLETED')..."
+              sleep 2
+            done
             if [ "$BOOT_COMPLETED" != "1" ]; then echo "::error::AVD failed to report sys.boot_completed=1 (got '$BOOT_COMPLETED')"; adb devices -l; exit 1; fi
             echo "AVD boot verified (sys.boot_completed=1)."
 
